@@ -9,13 +9,11 @@ import queue
 import yt_dlp
 import urllib.request
 import webbrowser
-import sys # Potrzebne do znalezienia ścieżki do zasobów
+import sys
 
 # ========== KONFIGURACJA AKTUALIZACJI ==========
-CURRENT_VERSION = "1.0"
-# POPRAWIONY LINK do pliku version.txt z Twojego GitHuba
+CURRENT_VERSION = "1.2" # Zwiększamy wersję po krytycznych poprawkach
 VERSION_URL = "https://raw.githubusercontent.com/Forgotten409/MP3TEST/main/version.txt" 
-# Link do strony "Releases" na Twoim GitHubie
 DOWNLOAD_URL = "https://github.com/Forgotten409/MP3TEST/releases"
 # ===============================================
 
@@ -29,7 +27,6 @@ except ImportError:
 
 # ------------------ Funkcje ------------------
 def resource_path(relative_path):
-    """ Zwraca poprawną ścieżkę do zasobów (działa w .exe i w skrypcie). """
     try:
         base_path = sys._MEIPASS
     except Exception:
@@ -37,7 +34,7 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 def check_for_updates():
-    if "TUTAJ_WKLEJ_LINK" in VERSION_URL: return # Nie sprawdzaj, jeśli linki są domyślnee
+    if "TUTAJ_WKLEJ_LINK" in VERSION_URL: return
     try:
         with urllib.request.urlopen(VERSION_URL, timeout=5) as response:
             latest_version = response.read().decode('utf-8').strip()
@@ -55,13 +52,7 @@ def find_pendrives():
     if TEST_MODE: return ["F:\\ (Test)", "G:\\ (Test)"]
     if not PYWIN32_AVAILABLE: return []
     drives = [d for d in win32api.GetLogicalDriveStrings().split('\000') if d]
-    pendrives = []
-    for drive in drives:
-        if win32file.GetDriveType(drive) == win32file.DRIVE_REMOVABLE:
-            try:
-                win32api.GetVolumeInformation(drive)
-                pendrives.append(drive)
-            except win32api.error: continue
+    pendrives = [drive for drive in drives if win32file.GetDriveType(drive) == win32file.DRIVE_REMOVABLE]
     return pendrives
 
 last_download_path = ""
@@ -100,18 +91,6 @@ def download_youtube(url, output_path, format_choice, msg_queue):
     except Exception as e:
         msg_queue.put(('error', f"Wystąpił błąd: {e}"))
 
-# ------------------ Animacja ------------------
-is_animating = False
-spinner_index = 0
-spinner_chars = ['|', '/', '—', '\\']
-
-def animate_spinner():
-    global is_animating, spinner_index
-    if is_animating:
-        spinner_label.configure(text=spinner_chars[spinner_index])
-        spinner_index = (spinner_index + 1) % len(spinner_chars)
-        root.after(150, animate_spinner)
-
 # ------------------ GUI ------------------
 def start_download_thread():
     url = url_entry.get().strip()
@@ -126,14 +105,6 @@ def start_download_thread():
     download_button.configure(state="disabled")
     progress_bar.set(0)
     status_label.configure(text="Rozpoczynam pracę...")
-    
-    global is_animating, spinner_index
-    is_animating = True
-    spinner_index = 0
-    spinner_label.configure(text=spinner_chars[spinner_index]) # POPRAWKA: Natychmiastowe pokazanie pierwszej klatki
-    youtube_icon_label.pack_forget()
-    spinner_label.pack(pady=(15, 10))
-    animate_spinner()
     
     threading.Thread(target=download_youtube, args=(url, output, format_var.get(), msg_queue), daemon=True).start()
 
@@ -150,11 +121,6 @@ def check_queue():
             if msg_type == 'progress': progress_bar.set(msg_value)
             elif msg_type == 'status': status_label.configure(text=msg_value)
             elif msg_type in ['done', 'error']:
-                global is_animating
-                is_animating = False
-                spinner_label.pack_forget()
-                youtube_icon_label.pack(pady=(15, 10))
-                
                 root.bell()
                 download_button.configure(state="normal")
                 if msg_type == 'done':
@@ -174,64 +140,75 @@ root = ctk.CTk()
 root.title(f"Łatwy YouTube Downloader v{CURRENT_VERSION}")
 root.geometry("700x750")
 root.resizable(False, False)
+try:
+    # Ikona dla okna i paska zadań
+    root.iconbitmap(resource_path("youtube_icon.ico"))
+except Exception:
+    print("Nie znaleziono pliku youtube_icon.ico.")
 
 font_normal = ("Arial", 16)
 font_big_bold = ("Arial", 20, "bold")
-font_spinner = ("Courier New", 50, "bold")
-
 msg_queue = queue.Queue()
 folder_path = ctk.StringVar(value=get_downloads_folder())
 format_var = ctk.StringVar(value="mp3")
 
-# ---- Elementy GUI ----
+# *** KLUCZOWA POPRAWKA UKŁADU INTERFEJSU ***
+
+# 1. Główna ramka, która pozwoli na scrollowanie, jeśli okno będzie za małe
+main_frame = ctk.CTkScrollableFrame(root)
+main_frame.pack(fill="both", expand=True)
+
+# 2. Ramka z zawartością wewnątrz ramki scrollowanej
+content_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+content_frame.pack(fill="both", expand=True)
+
+# 3. Dolna ramka na status, PRZYPIĘTA DO GŁÓWNEGO OKNA
+status_frame = ctk.CTkFrame(root)
+status_frame.pack(side="bottom", fill="x", padx=10, pady=10)
+progress_bar = ctk.CTkProgressBar(status_frame)
+progress_bar.set(0)
+progress_bar.pack(fill="x", padx=10, pady=(5, 5))
+status_label = ctk.CTkLabel(status_frame, text="Status: Czekam na zadanie", font=font_normal)
+status_label.pack(fill="x", padx=10, pady=(0, 5))
+
+# ---- Elementy GUI (teraz wewnątrz 'content_frame') ----
 try:
-    # Używamy resource_path, aby działało w .exe
     youtube_icon_pil = Image.open(resource_path("youtube_icon.png"))
     youtube_icon_ctk = CTkImage(light_image=youtube_icon_pil, dark_image=youtube_icon_pil, size=(80, 80))
-    youtube_icon_label = ctk.CTkLabel(root, image=youtube_icon_ctk, text="")
+    youtube_icon_label = ctk.CTkLabel(content_frame, image=youtube_icon_ctk, text="")
     youtube_icon_label.pack(pady=(15, 10))
-except Exception:
-    youtube_icon_label = ctk.CTkLabel(root, text="")
-    youtube_icon_label.pack(pady=(15, 10))
+except Exception as e:
+    print(f"Błąd ładowania ikony w oknie: {e}")
 
-spinner_label = ctk.CTkLabel(root, text="", font=font_spinner, height=80)
+ctk.CTkLabel(content_frame, text="Instrukcja:", font=font_big_bold).pack(pady=(10, 5), padx=25, anchor="w")
+ctk.CTkLabel(content_frame, text="1. Wklej link z YouTube.\n2. Wybierz folder lub pendrive.\n3. Wybierz format (MP3 lub MP4).\n4. Naciśnij 'Pobierz Plik'.", font=("Arial", 14), justify="left").pack(pady=5, padx=25, anchor="w")
 
-ctk.CTkLabel(root, text="Instrukcja:", font=font_big_bold).pack(pady=(10, 5), padx=25, anchor="w")
-ctk.CTkLabel(root, text="1. Wklej link z YouTube.\n2. Wybierz folder lub pendrive.\n3. Wybierz format (MP3 lub MP4).\n4. Naciśnij 'Pobierz Plik'.", font=("Arial", 14), justify="left").pack(pady=5, padx=25, anchor="w")
-
-ctk.CTkLabel(root, text="1. Link z YouTube:", font=font_big_bold).pack(pady=(20, 5), padx=25, anchor="w")
-url_entry = ctk.CTkEntry(root, placeholder_text="Tutaj wklej link", font=font_normal)
+ctk.CTkLabel(content_frame, text="1. Link z YouTube:", font=font_big_bold).pack(pady=(20, 5), padx=25, anchor="w")
+url_entry = ctk.CTkEntry(content_frame, placeholder_text="Tutaj wklej link", font=font_normal)
 url_entry.pack(pady=5, padx=25, ipady=10, fill="x")
 
-ctk.CTkLabel(root, text="2. Miejsce zapisu:", font=font_big_bold).pack(pady=(20, 5), padx=25, anchor="w")
+ctk.CTkLabel(content_frame, text="2. Miejsce zapisu:", font=font_big_bold).pack(pady=(20, 5), padx=25, anchor="w")
 pendrive_options = find_pendrives()
 options = pendrive_options + ["Wybierz folder ręcznie..."]
-pendrive_menu = ctk.CTkOptionMenu(root, values=options, command=on_pendrive_select, font=font_normal, dropdown_font=font_normal)
+pendrive_menu = ctk.CTkOptionMenu(content_frame, values=options, command=on_pendrive_select, font=font_normal, dropdown_font=font_normal)
 pendrive_menu.pack(pady=5, padx=25, fill="x")
 if not pendrive_options: pendrive_menu.set("Nie wykryto pendrive'a")
 else: pendrive_menu.set(f"Wykryto {len(pendrive_options)} pendrive'y - wybierz z listy")
-folder_display = ctk.CTkEntry(root, textvariable=folder_path, font=font_normal, state="readonly")
+folder_display = ctk.CTkEntry(content_frame, textvariable=folder_path, font=font_normal, state="readonly")
 folder_display.pack(pady=5, padx=25, ipady=10, fill="x")
 
-ctk.CTkLabel(root, text="3. Format pliku:", font=font_big_bold).pack(pady=(20, 10), padx=25, anchor="w")
-ctk.CTkRadioButton(root, text="Tylko muzyka (MP3)", variable=format_var, value="mp3", font=font_normal).pack(padx=40, anchor="w")
-ctk.CTkRadioButton(root, text="Wideo z dźwiękiem (MP4)", variable=format_var, value="mp4", font=font_normal).pack(padx=40, anchor="w", pady=10)
+ctk.CTkLabel(content_frame, text="3. Format pliku:", font=font_big_bold).pack(pady=(20, 10), padx=25, anchor="w")
+ctk.CTkRadioButton(content_frame, text="Tylko muzyka (MP3)", variable=format_var, value="mp3", font=font_normal).pack(padx=40, anchor="w")
+ctk.CTkRadioButton(content_frame, text="Wideo z dźwiękiem (MP4)", variable=format_var, value="mp4", font=font_normal).pack(padx=40, anchor="w", pady=10)
 
-ctk.CTkLabel(root, text="4. Pobieranie:", font=font_big_bold).pack(pady=(20, 10), padx=25, anchor="w")
-action_frame = ctk.CTkFrame(root, fg_color="transparent")
+ctk.CTkLabel(content_frame, text="4. Pobieranie:", font=font_big_bold).pack(pady=(20, 10), padx=25, anchor="w")
+action_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
 action_frame.pack(fill="x", padx=15, pady=10)
 download_button = ctk.CTkButton(action_frame, text="Pobierz Plik", command=start_download_thread, height=60, font=font_big_bold, fg_color="#2E8B57", hover_color="#3CB371")
 download_button.pack(side="left", expand=True, fill="x", padx=(10, 0))
 open_folder_button = ctk.CTkButton(action_frame, text="Otwórz Folder z Plikiem", command=open_folder_with_file, height=60, font=font_big_bold)
 
-status_frame = ctk.CTkFrame(root, fg_color="transparent")
-status_frame.pack(side="bottom", fill="x", padx=15, pady=15)
-progress_bar = ctk.CTkProgressBar(status_frame, height=20)
-progress_bar.set(0)
-progress_bar.pack(fill="x")
-status_label = ctk.CTkLabel(status_frame, text="Status: Czekam na zadanie", font=font_normal)
-status_label.pack(pady=10, fill="x")
-
+# Uruchomienie sprawdzania aktualizacji i pętli GUI
 threading.Thread(target=check_for_updates, daemon=True).start()
 root.after(100, check_queue)
 root.mainloop()
