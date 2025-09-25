@@ -9,19 +9,17 @@ import queue
 import yt_dlp
 import urllib.request
 import webbrowser
+import sys # Potrzebne do znalezienia ścieżki do zasobów
 
 # ========== KONFIGURACJA AKTUALIZACJI ==========
-# Zmień te wartości, aby mechanizm aktualizacji działał
 CURRENT_VERSION = "1.0"
-# Link do pliku .txt online, który zawiera TYLKO numer najnowszej wersji (np. 1.1)
-VERSION_URL = "https://raw.githubusercontent.com/twoja-nazwa/twoje-repo/main/version.txt" 
-# Link do strony/pliku, skąd można pobrać nową wersję
-DOWNLOAD_URL = "https://github.com/twoja-nazwa/twoje-repo/releases/latest"
+# POPRAWIONY LINK do pliku version.txt z Twojego GitHuba
+VERSION_URL = "https://raw.githubusercontent.com/Forgotten409/MP3TEST/main/version.txt" 
+# Link do strony "Releases" na Twoim GitHubie
+DOWNLOAD_URL = "https://github.com/Forgotten409/MP3TEST/releases"
 # ===============================================
 
-# ========== TRYB TESTOWY DLA PENDRIVE'ÓW ==========
 TEST_MODE = False
-# ===============================================
 
 try:
     import win32api, win32file
@@ -30,17 +28,22 @@ except ImportError:
     PYWIN32_AVAILABLE = False
 
 # ------------------ Funkcje ------------------
+def resource_path(relative_path):
+    """ Zwraca poprawną ścieżkę do zasobów (działa w .exe i w skrypcie). """
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
 def check_for_updates():
+    if "TUTAJ_WKLEJ_LINK" in VERSION_URL: return # Nie sprawdzaj, jeśli linki są domyślnee
     try:
         with urllib.request.urlopen(VERSION_URL, timeout=5) as response:
             latest_version = response.read().decode('utf-8').strip()
         
-        # Proste porównanie wersji. Dla bardziej złożonych (np. 1.10 vs 1.2) potrzeba by lepszej logiki.
-        if latest_version > CURRENT_VERSION:
-            if messagebox.askyesno("Dostępna aktualizacja!", 
-                                 f"Dostępna jest nowa wersja programu ({latest_version}).\n"
-                                 f"Twoja wersja to {CURRENT_VERSION}.\n\n"
-                                 "Czy chcesz otworzyć stronę pobierania?"):
+        if float(latest_version) > float(CURRENT_VERSION):
+            if messagebox.askyesno("Dostępna aktualizacja!", f"Dostępna jest nowa wersja programu ({latest_version}).\nTwoja wersja to {CURRENT_VERSION}.\n\nCzy chcesz otworzyć stronę pobierania?"):
                 webbrowser.open(DOWNLOAD_URL)
     except Exception as e:
         print(f"Nie udało się sprawdzić aktualizacji: {e}")
@@ -124,8 +127,10 @@ def start_download_thread():
     progress_bar.set(0)
     status_label.configure(text="Rozpoczynam pracę...")
     
-    global is_animating
+    global is_animating, spinner_index
     is_animating = True
+    spinner_index = 0
+    spinner_label.configure(text=spinner_chars[spinner_index]) # POPRAWKA: Natychmiastowe pokazanie pierwszej klatki
     youtube_icon_label.pack_forget()
     spinner_label.pack(pady=(15, 10))
     animate_spinner()
@@ -180,7 +185,8 @@ format_var = ctk.StringVar(value="mp3")
 
 # ---- Elementy GUI ----
 try:
-    youtube_icon_pil = Image.open("youtube_icon.png")
+    # Używamy resource_path, aby działało w .exe
+    youtube_icon_pil = Image.open(resource_path("youtube_icon.png"))
     youtube_icon_ctk = CTkImage(light_image=youtube_icon_pil, dark_image=youtube_icon_pil, size=(80, 80))
     youtube_icon_label = ctk.CTkLabel(root, image=youtube_icon_ctk, text="")
     youtube_icon_label.pack(pady=(15, 10))
@@ -226,7 +232,6 @@ progress_bar.pack(fill="x")
 status_label = ctk.CTkLabel(status_frame, text="Status: Czekam na zadanie", font=font_normal)
 status_label.pack(pady=10, fill="x")
 
-# Uruchomienie sprawdzania aktualizacji i pętli GUI
 threading.Thread(target=check_for_updates, daemon=True).start()
 root.after(100, check_queue)
 root.mainloop()
